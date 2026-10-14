@@ -76,8 +76,8 @@
 
   <div class="card">
     <h3 style="margin-top:0">Columnas que extrae</h3>
-    <p class="hint"><b>Factura</b> = TipoDoc + N° (ej. <code>01-F001-00042419</code>) · <b>Cant. Cajas</b> = suma de cantidades del detalle · <b>Formato</b> = peso en kg desde la descripción (ej. <code>5.0 KG</code>) · <b>Precio Unit.</b> = precio de la línea (promedio ponderado si se agrupa) · <b>Valor Venta</b> = suma de valor venta · <b>Variedad</b> = texto entre <code>UVA</code> y <code>PARA</code> (ej. <code>SUGAR CRISP</code>) · <b>Contenedor</b> = Dato Adicional 09 · <b>F. Emisión / Vencimiento</b> = cabecera (DD/MM/YYYY) · <b>F. Despacho</b> = Dato Adicional 04 · <b>Guía</b> = DA-03, o guía de remisión del XML · <b>Comentarios</b> = desde el formato hasta el final de la descripción.</p>
-    <p class="hint">Ejemplo: <code>SERVICIO MAQUILA: UVA SUGAR CRISP PARA EXPORTACIÓN EN CAJA CARTÓN 5.0 KG. (CONTENIENDO: 10 UND. CLAMSHELL 500 GRAMOS)</code> → Variedad <code>SUGAR CRISP</code>, Formato <code>5.0 KG</code>, Comentarios <code>5.0 KG. (CONTENIENDO: 10 UND. CLAMSHELL 500 GRAMOS)</code>.</p>
+    <p class="hint"><b>Factura</b> = TipoDoc + N° (ej. <code>01-F001-00042419</code>) · <b>Cant. Cajas</b> = suma de cantidades del detalle · <b>Formato</b> = peso de la caja como número (ej. <code>5.0</code>) · <b>Precio Unit.</b> = precio de la línea (promedio ponderado si se agrupa) · <b>Valor Venta</b> = suma de valor venta · <b>Variedad</b> = texto entre <code>UVA</code> y <code>PARA</code> (ej. <code>SUGAR CRISP</code>) · <b>Contenedor</b> = Dato Adicional 09 · <b>F. Emisión / Vencimiento</b> = cabecera (DD/MM/YYYY) · <b>F. Despacho</b> = Dato Adicional 04 · <b>Guía</b> = DA-03, o guía de remisión del XML · <b>Comentarios</b> = desde el formato hasta el final de la descripción.</p>
+    <p class="hint">Ejemplo: <code>SERVICIO MAQUILA: UVA SUGAR CRISP PARA EXPORTACIÓN EN CAJA CARTÓN 5.0 KG. (CONTENIENDO: 10 UND. CLAMSHELL 500 GRAMOS)</code> → Variedad <code>SUGAR CRISP</code>, Formato <code>5.0</code>, Comentarios <code>5.0 KG. (CONTENIENDO: 10 UND. CLAMSHELL 500 GRAMOS)</code>.</p>
   </div>
 </main>
 <footer>Hecho para Camposol · Uso local · SheetJS + DOMParser</footer>
@@ -112,7 +112,7 @@ async function handleFiles(files){
       if(res.filas && res.filas.length){
         res.filas.forEach(r=>ROWS.push(r));
         facturasSet.add(res.filas[0].factura);
-        const d = res.filas.map(r=>`${r.variedad} ${r.formato} (${r.cantidad_cajas} cj)`).join(' · ');
+        const d = res.filas.map(r=>`${r.variedad} ${fmtFormato(r.formato)} (${r.cantidad_cajas} cj)`).join(' · ');
         li.innerHTML = `<span>✅ ${escapeHtml(f.name)} → ${escapeHtml(res.filas[0].factura)} [${res.filas.length} fila(s)]: ${escapeHtml(d)}</span><span class="ok">OK</span>`;
       } else {
         li.innerHTML = `<span>⏭ ${escapeHtml(f.name)} → ${escapeHtml(res.skipReason||'sin líneas')}</span><span class="err">omitido</span>`;
@@ -235,9 +235,10 @@ function parseVariedad(desc){
   return m[1].replace(/\s+/g,' ').trim().toUpperCase();
 }
 function parseFormato(desc){
-  const m = desc.match(/(\d+(?:[.,]\d+)?\s*KG)/i);
+  const m = desc.match(/(\d+(?:[.,]\d+)?)\s*KG/i);
   if(!m) return '';
-  return m[1].replace(',','.').replace(/\s+/g,' ').trim().toUpperCase();
+  const n = parseFloat(m[1].replace(',','.'));
+  return isNaN(n) ? '' : n;
 }
 function parseComentarios(desc){
   const m = desc.match(/\d+(?:[.,]\d+)?\s*KG/i);
@@ -263,6 +264,7 @@ function toNum(v){
   return Number(v);
 }
 function round(n,d){ if(n==null||isNaN(n)) return ''; const p=Math.pow(10,d); return Math.round(Number(n)*p)/p; }
+function fmtFormato(v){ if(v===''||v==null||isNaN(Number(v))) return v??''; const n=Number(v); return Number.isInteger(n)? n.toFixed(1) : String(n); }
 function escapeHtml(s){ return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
 /* ---------- Vista previa + stats ---------- */
@@ -275,7 +277,7 @@ const COLS = [
 
 function renderTable(){
   const thead = `<tr>${COLS.map(c=>`<th>${c[1]}</th>`).join('')}</tr>`;
-  const rows = ROWS.slice(0,300).map(r=>`<tr>${COLS.map(([k])=>`<td title="${escapeHtml(r[k]??'')}">${escapeHtml(r[k]??'')}</td>`).join('')}</tr>`).join('')
+  const rows = ROWS.slice(0,300).map(r=>`<tr>${COLS.map(([k])=>{ const v = k==='formato'? fmtFormato(r[k]) : (r[k]??''); return `<td title="${escapeHtml(v)}">${escapeHtml(v)}</td>`; }).join('')}</tr>`).join('')
     || `<tr><td style="padding:20px">Sin datos.</td></tr>`;
   document.querySelector('#tbl thead').innerHTML = thead;
   document.querySelector('#tbl tbody').innerHTML = rows;
@@ -303,6 +305,11 @@ function downloadExcel(){
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.json_to_sheet(data,{header:FULL.map(c=>c[0])});
   const range = XLSX.utils.decode_range(ws['!ref']||'A1:A1');
+  const fmtCol = FULL.findIndex(c=>c[0]==='formato');
+  for(let r=1;r<=range.e.r;r++){
+    const addr = XLSX.utils.encode_cell({r,c:fmtCol});
+    if(ws[addr] && typeof ws[addr].v==='number'){ ws[addr].z = '0.0'; }
+  }
   for(let c=0;c<FULL.length;c++){
     const addr = XLSX.utils.encode_cell({r:0,c});
     if(ws[addr]){ ws[addr].v = FULL[c][1]; }
