@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Facturas XML → Consolidado Maquila | Camposol</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{--green:#1a7f37;--green-d:#146c2e;--bg:#f3f5f3;--card:#fff;--txt:#1c2b1d;--muted:#64748b;--line:#e2e8f0}
+  *{box-sizing:border-box;font-family:"Segoe UI",Arial,sans-serif}
+  body{margin:0;background:var(--bg);color:var(--txt)}
+  header{background:linear-gradient(135deg,#14532d,#1a7f37);color:#fff;padding:22px 24px}
+  header h1{margin:0;font-size:22px}
+  header p{margin:6px 0 0;opacity:.9;font-size:14px}
+  main{max-width:1200px;margin:24px auto;padding:0 16px 40px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:18px;box-shadow:0 2px 10px rgba(0,0,0,.04)}
+  #drop{border:2px dashed #86c596;border-radius:14px;padding:34px 20px;text-align:center;background:#f8fdf8;cursor:pointer;transition:.2s}
+  #drop.dragover{background:#e8f7e8;border-color:var(--green)}
+  #drop b{color:var(--green)}
+  .btn{display:inline-block;border:0;border-radius:10px;padding:12px 18px;font-size:15px;font-weight:600;cursor:pointer}
+  .btn-primary{background:var(--green);color:#fff}
+  .btn-primary:hover{background:var(--green-d)}
+  .btn-primary:disabled{background:#9db8a3;cursor:not-allowed}
+  .btn-ghost{background:#eef2ee;color:#1c2b1d;margin-left:8px}
+  .stats{display:flex;gap:12px;flex-wrap:wrap;margin:14px 0}
+  .stat{flex:1;min-width:150px;background:#f8faf8;border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .stat span{font-size:12px;color:var(--muted);text-transform:uppercase}
+  .stat strong{display:block;font-size:22px;margin-top:4px}
+  .table-wrap{overflow:auto;max-height:460px;border:1px solid var(--line);border-radius:10px}
+  table{border-collapse:collapse;width:100%;font-size:12.5px;min-width:1100px}
+  th{position:sticky;top:0;background:#14532d;color:#fff;padding:9px 10px;text-align:left;white-space:nowrap}
+  td{padding:7px 10px;border-bottom:1px solid #eef2ee;white-space:nowrap;max-width:420px;overflow:hidden;text-overflow:ellipsis}
+  tr:nth-child(even) td{background:#f9fbf9}
+  #fileList{margin:12px 0 0;padding:0;list-style:none;max-height:180px;overflow:auto}
+  #fileList li{font-size:13px;padding:7px 10px;border-bottom:1px solid #eef2ee;display:flex;justify-content:space-between;gap:10px}
+  .ok{color:var(--green);font-weight:700}
+  .err{color:#c0392b;font-weight:700}
+  .hint{font-size:13px;color:var(--muted)}
+  footer{text-align:center;color:var(--muted);font-size:12px;padding:18px}
+  code{background:#eef2ee;padding:2px 6px;border-radius:6px}
+</style>
+</head>
+<body>
+<header>
+  <h1>🧾 Facturas XML → Consolidado Maquila</h1>
+  <p>Sube XML UBL 2.1 (Factura / Nota SUNAT). Se agrupa por <b>variedad + formato</b> desde el detalle y se agregan datos de cabecera. Una sola tabla lista para Excel. Todo local en tu navegador.</p>
+</header>
+
+<main>
+  <div class="card">
+    <div id="drop">
+      <div style="font-size:40px">📂</div>
+      <p><b>Arrastra aquí tus archivos .xml</b> o haz clic para seleccionarlos</p>
+      <p class="hint">Los CDR (ApplicationResponse) se omiten automáticamente.</p>
+      <input type="file" id="fileInput" accept=".xml,.XML" multiple hidden>
+    </div>
+    <ul id="fileList"></ul>
+    <div class="stats">
+      <div class="stat"><span>Facturas</span><strong id="stOk">0</strong></div>
+      <div class="stat"><span>Filas (variedad+formato)</span><strong id="stLines">0</strong></div>
+      <div class="stat"><span>Total cajas</span><strong id="stCajas">0</strong></div>
+      <div class="stat"><span>Suma valor venta</span><strong id="stTotal">—</strong></div>
+    </div>
+    <button class="btn btn-primary" id="btnExcel" disabled>⬇ Descargar Excel consolidado</button>
+    <button class="btn btn-ghost" id="btnClear">Limpiar</button>
+    <p class="hint" id="msg"></p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 10px">Consolidado (una fila por factura × variedad × formato)</h3>
+    <div class="table-wrap">
+      <table id="tbl"><thead></thead><tbody><tr><td style="padding:20px">Aún no hay datos. Sube archivos XML para ver la vista previa.</td></tr></tbody></table>
+    </div>
+    <p class="hint">Vista previa limitada a 300 filas. El Excel contiene el 100%.</p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">Columnas que extrae</h3>
+    <p class="hint"><b>Factura</b> = TipoDoc + N° (ej. <code>01-F001-00042419</code>) · <b>Cant. Cajas</b> = suma de cantidades del detalle · <b>Formato</b> = peso en kg desde la descripción (ej. <code>5.0 KG</code>) · <b>Precio Unit.</b> = precio de la línea (promedio ponderado si se agrupa) · <b>Valor Venta</b> = suma de valor venta · <b>Variedad</b> = texto entre <code>UVA</code> y <code>PARA</code> (ej. <code>SUGAR CRISP</code>) · <b>Contenedor</b> = Dato Adicional 09 · <b>F. Emisión / Vencimiento</b> = cabecera (DD/MM/YYYY) · <b>F. Despacho</b> = Dato Adicional 04 · <b>Guía</b> = DA-03, o guía de remisión del XML · <b>Comentarios</b> = desde el formato hasta el final de la descripción.</p>
+    <p class="hint">Ejemplo: <code>SERVICIO MAQUILA: UVA SUGAR CRISP PARA EXPORTACIÓN EN CAJA CARTÓN 5.0 KG. (CONTENIENDO: 10 UND. CLAMSHELL 500 GRAMOS)</code> → Variedad <code>SUGAR CRISP</code>, Formato <code>5.0 KG</code>, Comentarios <code>5.0 KG. (CONTENIENDO: 10 UND. CLAMSHELL 500 GRAMOS)</code>.</p>
+  </div>
+</main>
+<footer>Hecho para Camposol · Uso local · SheetJS + DOMParser</footer>
+
+<script>
+let ROWS = [];
+let facturasSet = new Set();
+const $ = id => document.getElementById(id);
+const drop = $('drop'), fileInput = $('fileInput');
+
+drop.onclick = () => fileInput.click();
+['dragover','dragenter'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('dragover')}));
+['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('dragover')}));
+drop.addEventListener('drop', ev=>{ handleFiles(ev.dataTransfer.files); });
+fileInput.addEventListener('change', ()=>{ handleFiles(fileInput.files); fileInput.value=''; });
+
+$('btnClear').onclick = ()=>{ ROWS=[]; facturasSet=new Set(); $('fileList').innerHTML=''; updateStats(); renderTable(); $('btnExcel').disabled=true; $('msg').textContent=''; };
+$('btnExcel').onclick = downloadExcel;
+
+async function handleFiles(files){
+  const list = [...files].filter(f=>/\.xml$/i.test(f.name));
+  if(!list.length){ $('msg').textContent='⚠ Selecciona archivos con extensión .xml'; return; }
+  for(const f of list){
+    const li = document.createElement('li');
+    li.innerHTML = `<span>⏳ ${escapeHtml(f.name)}</span><span>leyendo…</span>`;
+    $('fileList').appendChild(li);
+    try{
+      const text = await decodeFile(f);
+      const doc = new DOMParser().parseFromString(text,'text/xml');
+      if(doc.querySelector('parsererror')) throw new Error('XML malformado');
+      const res = parseSunat(doc, f.name);
+      if(res.filas && res.filas.length){
+        res.filas.forEach(r=>ROWS.push(r));
+        facturasSet.add(res.filas[0].factura);
+        const d = res.filas.map(r=>`${r.variedad} ${r.formato} (${r.cantidad_cajas} cj)`).join(' · ');
+        li.innerHTML = `<span>✅ ${escapeHtml(f.name)} → ${escapeHtml(res.filas[0].factura)} [${res.filas.length} fila(s)]: ${escapeHtml(d)}</span><span class="ok">OK</span>`;
+      } else {
+        li.innerHTML = `<span>⏭ ${escapeHtml(f.name)} → ${escapeHtml(res.skipReason||'sin líneas')}</span><span class="err">omitido</span>`;
+      }
+    }catch(err){
+      li.innerHTML = `<span>❌ ${escapeHtml(f.name)} → ${escapeHtml(err.message)}</span><span class="err">error</span>`;
+    }
+  }
+  updateStats(); renderTable();
+  if(ROWS.length) $('btnExcel').disabled = false;
+  $('msg').textContent = `Procesadas ${facturasSet.size} facturas → ${ROWS.length} filas agrupadas.`;
+}
+
+async function decodeFile(file){
+  const buf = await file.arrayBuffer();
+  try{ return new TextDecoder('utf-8',{fatal:true}).decode(buf); }
+  catch(e){ return new TextDecoder('iso-8859-1').decode(buf); }
+}
+
+/* ---------- Parser SUNAT UBL ---------- */
+function child(p,n){ if(!p||!p.children) return null; for(const c of p.children){ if(c.localName===n) return c; } return null; }
+function children(p,n){ if(!p||!p.children) return []; return [...p.children].filter(c=>c.localName===n); }
+function txt(p,n){ const c = child(p,n); return c ? (c.textContent||'').trim() : ''; }
+function attr(el,a){ return el ? (el.getAttribute(a)||'') : ''; }
+function allByLocal(doc,n){ return [...doc.getElementsByTagNameNS('*',n)]; }
+
+function parseSunat(doc, fileName){
+  const root = doc.documentElement;
+  const kind = root.localName;
+  if(kind==='ApplicationResponse') return {skipReason:'Es CDR / respuesta SUNAT (ApplicationResponse)'};
+  if(!['Invoice','CreditNote','DebitNote'].includes(kind)) return {skipReason:'Tipo '+kind+' no soportado'};
+
+  const isCredit = kind==='CreditNote', isDebit = kind==='DebitNote';
+  const lineTag = isCredit?'CreditNoteLine':(isDebit?'DebitNoteLine':'InvoiceLine');
+  const qtyTag = isCredit?'CreditedQuantity':(isDebit?'DebitedQuantity':'InvoicedQuantity');
+
+  const tipoCod = txt(root,'InvoiceTypeCode') || txt(root,'CreditNoteTypeCode') || txt(root,'DebitNoteTypeCode') || (isCredit?'07':isDebit?'08':'01');
+  const nro = txt(root,'ID');
+  const factura = tipoCod + '-' + nro; // ej. 01-F001-00042419
+  const fechaEmi = fmtFecha(txt(root,'IssueDate'));
+  const fechaVen = fmtFecha(txt(root,'DueDate') || txt(root,'PaymentDueDate'));
+  const moneda = txt(root,'DocumentCurrencyCode');
+
+  // Datos adicionales DA
+  const da = {};
+  for(const d of allByLocal(doc,'DatoAdicional')){
+    const c = txt(d,'Codigo'), v = txt(d,'Valor');
+    if(c && !(c in da)) da[c]=v;
+    else if(c) da[c]+=' | '+v;
+  }
+  const contenedor = clean((da['09']||'').replace(/\*/g,''));
+  const fechaDesp = fmtFecha(clean((da['04']||'').replace(/\*/g,'')));
+
+  // Guías: preferir DA-03, si no DespatchDocumentReference, si no extraer de DA-08
+  const despatchIds = children(root,'DespatchDocumentReference').map(d=>txt(d,'ID')).filter(Boolean);
+  let guia = clean((da['03']||'').replace(/\*/g,''));
+  if(!guia && despatchIds.length) guia = despatchIds.join(' | ');
+  if(!guia && da['08']){
+    const m = (da['08']||'').match(/T\d+\s*-+\s*\d+/gi);
+    if(m) guia = [...new Set(m.map(s=>s.trim()))].join(' | ');
+  }
+
+  const lines = children(root,lineTag);
+  if(!lines.length) return {skipReason:'Sin líneas de detalle'};
+
+  // Agrupar por variedad + formato dentro de la factura
+  const groups = new Map();
+  for(const ln of lines){
+    const qtyEl = child(ln,qtyTag) || child(ln,'InvoicedQuantity') || child(ln,'CreditedQuantity') || child(ln,'DebitedQuantity');
+    const item = child(ln,'Item');
+    const priceEl = child(ln,'Price');
+    const descRaw = txt(item,'Description');
+    const desc = clean(descRaw);
+    const variedad = parseVariedad(desc);
+    const formato = parseFormato(desc);
+    const comentarios = parseComentarios(desc);
+    const cantidad = toNum(qtyEl ? qtyEl.textContent : '');
+    const precio = toNum(priceEl ? txt(priceEl,'PriceAmount') : '');
+    const valor = toNum(txt(ln,'LineExtensionAmount'));
+    const key = variedad + '||' + formato;
+    if(!groups.has(key)){
+      groups.set(key,{factura, variedad, formato, cantidad_cajas:0, valor_venta:0, _precios:[],
+        contenedor, fecha_emision:fechaEmi, fecha_despacho:fechaDesp, fecha_vencimiento:fechaVen,
+        guia, comentariosSet:new Set(), _com:[]});
+    }
+    const g = groups.get(key);
+    g.cantidad_cajas += cantidad||0;
+    g.valor_venta += valor||0;
+    if(precio!=='' && !isNaN(precio)) g._precios.push({precio, cantidad:cantidad||0});
+    if(comentarios && !g.comentariosSet.has(comentarios)){ g.comentariosSet.add(comentarios); g._com.push(comentarios); }
+  }
+
+  const filas = [...groups.values()].map(g=>{
+    let precioUnit = '';
+    if(g.cantidad_cajas && g.valor_venta) precioUnit = round(g.valor_venta / g.cantidad_cajas, 4);
+    else if(g._precios.length) precioUnit = g._precios[0].precio;
+    return {
+      factura: g.factura,
+      cantidad_cajas: round(g.cantidad_cajas, 3),
+      formato: g.formato,
+      precio_unitario: precioUnit,
+      valor_venta: round(g.valor_venta, 2),
+      variedad: g.variedad,
+      contenedor: g.contenedor,
+      fecha_emision: g.fecha_emision,
+      fecha_despacho: g.fecha_despacho,
+      fecha_vencimiento: g.fecha_vencimiento,
+      guia: g.guia,
+      comentarios: g._com.join(' | ')
+    };
+  });
+
+  return {filas};
+}
+
+/* ----- variedad / formato / comentarios ----- */
+function parseVariedad(desc){
+  const m = desc.match(/UVA\s+(.+?)\s+PARA\s/i);
+  if(!m) return '';
+  return m[1].replace(/\s+/g,' ').trim().toUpperCase();
+}
+function parseFormato(desc){
+  const m = desc.match(/(\d+(?:[.,]\d+)?\s*KG)/i);
+  if(!m) return '';
+  return m[1].replace(',','.').replace(/\s+/g,' ').trim().toUpperCase();
+}
+function parseComentarios(desc){
+  const m = desc.match(/\d+(?:[.,]\d+)?\s*KG/i);
+  if(!m) return '';
+  let c = desc.slice(m.index).trim();
+  c = c.replace(/^DE\s+/i,'').trim();
+  return c.replace(/\s+/g,' ');
+}
+function fmtFecha(v){
+  v = (v||'').trim();
+  if(!v) return '';
+  let m = v.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(m) return `${m[3]}/${m[2]}/${m[1]}`;
+  m = v.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if(m) return v.slice(0,10);
+  return v;
+}
+function clean(s){ return (s||'').replace(/\s+/g,' ').trim(); }
+function toNum(v){
+  if(v==null) return 0;
+  v = String(v).trim().replace(/,/g,'');
+  if(v===''||isNaN(Number(v))) return 0;
+  return Number(v);
+}
+function round(n,d){ if(n==null||isNaN(n)) return ''; const p=Math.pow(10,d); return Math.round(Number(n)*p)/p; }
+function escapeHtml(s){ return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+/* ---------- Vista previa + stats ---------- */
+const COLS = [
+  ['factura','Factura'],['cantidad_cajas','Cant. Cajas'],['formato','Formato'],
+  ['precio_unitario','Precio Unit.'],['valor_venta','Valor Venta'],['variedad','Variedad'],
+  ['contenedor','Contenedor'],['fecha_emision','F. Emisión'],['fecha_despacho','F. Despacho'],
+  ['fecha_vencimiento','F. Vencimiento'],['guia','Guía'],['comentarios','Comentarios']
+];
+
+function renderTable(){
+  const thead = `<tr>${COLS.map(c=>`<th>${c[1]}</th>`).join('')}</tr>`;
+  const rows = ROWS.slice(0,300).map(r=>`<tr>${COLS.map(([k])=>`<td title="${escapeHtml(r[k]??'')}">${escapeHtml(r[k]??'')}</td>`).join('')}</tr>`).join('')
+    || `<tr><td style="padding:20px">Sin datos.</td></tr>`;
+  document.querySelector('#tbl thead').innerHTML = thead;
+  document.querySelector('#tbl tbody').innerHTML = rows;
+}
+function updateStats(){
+  $('stOk').textContent = facturasSet.size;
+  $('stLines').textContent = ROWS.length;
+  const cajas = ROWS.reduce((a,r)=>a+(Number(r.cantidad_cajas)||0),0);
+  $('stCajas').textContent = cajas.toLocaleString('es-PE');
+  const s = ROWS.reduce((a,r)=>a+(Number(r.valor_venta)||0),0);
+  $('stTotal').textContent = ROWS.length ? s.toLocaleString('es-PE',{minimumFractionDigits:2,maximumFractionDigits:2}) : '—';
+}
+
+/* ---------- Excel (una sola hoja) ---------- */
+const FULL = [
+  ['factura','Factura',18],['cantidad_cajas','Cant_Cajas',12],['formato','Formato',11],
+  ['precio_unitario','Precio_Unit',13],['valor_venta','Valor_Venta',13],['variedad','Variedad',16],
+  ['contenedor','Contenedor',15],['fecha_emision','F_Emision',12],['fecha_despacho','F_Despacho',12],
+  ['fecha_vencimiento','F_Vencimiento',13],['guia','Guia',20],['comentarios','Comentarios',60]
+];
+
+function downloadExcel(){
+  if(!ROWS.length) return;
+  const data = ROWS.map(r=>{ const o={}; FULL.forEach(([k])=>o[k]=r[k]??''); return o; });
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(data,{header:FULL.map(c=>c[0])});
+  const range = XLSX.utils.decode_range(ws['!ref']||'A1:A1');
+  for(let c=0;c<FULL.length;c++){
+    const addr = XLSX.utils.encode_cell({r:0,c});
+    if(ws[addr]){ ws[addr].v = FULL[c][1]; }
+  }
+  ws['!cols'] = FULL.map(d=>({wch:d[2]}));
+  ws['!autofilter'] = {ref:ws['!ref']};
+  try{ ws['!freeze'] = 'A2'; }catch(e){}
+  XLSX.utils.book_append_sheet(wb, ws, 'Consolidado');
+  const d = new Date(), p = n=>String(n).padStart(2,'0');
+  XLSX.writeFile(wb, `maquila_consolidado_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.xlsx`);
+}
+</script>
+</body>
+</html>

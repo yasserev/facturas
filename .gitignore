@@ -1,0 +1,6 @@
+# XML de comprobantes SUNAT (datos sensibles, solo uso local)
+*.xml
+*.[Xx][Mm][Ll]
+
+# Excel generados por la app
+*.xlsx
